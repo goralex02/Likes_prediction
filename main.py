@@ -1,10 +1,10 @@
 import time
-
 import logging
-
 import pandas
 import os
+import re
 
+from tqdm import tqdm
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
@@ -23,13 +23,27 @@ def check_doubles(filename):
     df.reset_index(drop=True, inplace=True)
     df.to_csv(f'no_doubles_{filename}', index=True)
 
+
+def extract_content(url):
+        if 'avatars.mds.yandex.net/get-shedevrum' in url:
+            content = re.search(r'get-shedevrum/(\d+)/(.+?)/orig', url).group(2)
+        elif 'masterpiecer-images.s3.yandex.net' in url:
+            content = re.search(r'masterpiecer-images.s3.yandex.net/(.+?):(.+?)', url).group(1) #upscaled
+        else:
+            content = "Некорректная ссылка"
+
+        if not content == "Некорректная ссылка":
+            content = 'https://shedevrum.ai/post/'+content+'/'
+        return content
+
+
 class CSV:
     def __init__(self):
-        self.data = {"author": [], "subsme": [], "subs": [], "like": []}
-        self.author_data = {"author": [], "prompt": [], "link_to_image": [], "like": []}
+        self.data = {"author": [], "subsme": [], "subs": [], "total_likes": [], "desq": [],}
+        self.author_data = {"author": [], "prompt": [], "link_to_image": [],  "img_likes": [], "comments": []}
 
     def __update__(self):
-        self.author_data = {"author": [], "prompt": [], "link_to_image": [], "like": []}
+        self.author_data = {"author": [], "prompt": [], "link_to_image": [], "img_likes": [], "comments": []}
 
     def add_author(self, author: str):
         try:
@@ -37,12 +51,13 @@ class CSV:
         except Exception as e:
             logging.error(e)
     
-    def add_image_to_author(self, author:str, image: str, prompt: str, like: str):
+    def add_image_to_author(self, author:str, image: str, prompt: str, like: str, comments: str):
         try:
             self.author_data["author"].append(author)
             self.author_data["prompt"].append(prompt)
-            self.author_data["like"].append(like)
+            self.author_data["img_likes"].append(like)
             self.author_data["link_to_image"].append(image)
+            self.author_data["comments"].append(comments)
         except Exception as e:
             logging.error(e)
 
@@ -61,12 +76,13 @@ class CSV:
         except Exception as e:
             logging.error(e)
 
-    def add_author_data(self, author: str, subsme: str, subs: str, like: str):
+    def add_author_data(self, author: str, subsme: str, subs: str, like: str, desq: str):
         try:
             self.data["author"].append(author)
             self.data["subsme"].append(subsme)
             self.data["subs"].append(subs)
             self.data["like"].append(like)
+            self.data["desq"].append(desq)
         except Exception as e:
             logging.error(e)
 
@@ -78,7 +94,8 @@ class Schedevrum:
                              "Firefox/3.5.5 (.NET CLR 3.5.30728 )")
         self.caps = DesiredCapabilities().CHROME
         self.caps["pageLoadStrategy"] = "eager"
-        self.driver = uc.Chrome(use_subprocess=True, options=options, desired_capabilities=self.caps)
+        #self.driver = uc.Chrome(use_subprocess=True, options=options, desired_capabilities=self.caps)
+        self.driver = webdriver.Chrome()
         self.csv = CSV()
         logging.info("StartUp")
 
@@ -103,12 +120,14 @@ class Schedevrum:
 
                 self.driver.get(f"https://shedevrum.ai/profile/{author}/")
                 time.sleep(1)
-                subsme = self.driver.find_element(By.XPATH, '//*[@id="app"]/div[3]/div/div[2]/div[1]/span[1]').text
-                subs = self.driver.find_element(By.XPATH, '//*[@id="app"]/div[3]/div/div[2]/div[2]/span[1]').text
-                like = self.driver.find_element(By.XPATH, '//*[@id="app"]/div[3]/div/div[2]/div[3]/span[1]').text
-
-                self.csv.add_author_data(author_name, subsme, subs, like)
-                print(author_name, subsme, subs, like)
+                subsme = self.driver.find_element(By.XPATH, '//*[@id="app"]/div[3]/div/div[2]/div[1]/span[1]').text #подписки
+                subs = self.driver.find_element(By.XPATH, '//*[@id="app"]/div[3]/div/div[2]/div[2]/span[1]').text #подписчики
+                like = self.driver.find_element(By.XPATH, '//*[@id="app"]/div[3]/div/div[2]/div[3]/span[1]').text #суммарно лайков
+                #desq = self.driver.find_element(By.XPATH, '//*[@id="app"]/div[3]/div/div[3]/div[1]/span[1]').text
+                desq: str = soup.find(
+                    class_= "whitespace-pre-wrap stretch-profile-description text-[1.3rem] leading-[1.6rem] text-[rgba(0,0,0,0.66)] text-center")
+                self.csv.add_author_data(author_name, subsme, subs, like, desq)
+                print(author_name, subsme, subs, like, desq)
 
             except Exception as e:
                 logging.error(e)
@@ -151,9 +170,19 @@ class Schedevrum:
                     class_="prompt text-small md:text-base stretch-quaternary text-secondary break-words line-clamp-2 self-center whitespace-pre-wrap").get(
                     "title")
                 
-                link_image: str = image.find(class_="aspect-square w-full bg-[#f5f5f5] transition-[opacity] duration-500 opacity-100 rounded-[1.2rem]").get("src")
+                link_image: str = image.find(
+                    class_="aspect-square w-full bg-[#f5f5f5] transition-[opacity] duration-500 opacity-100 rounded-[1.2rem]").get("src")
 
-                self.csv.add_image_to_author(author, link_image, prompt.replace("\n", " ").replace("  ", " "), like)
+                comments: str = soup.find(
+                    class_="pt-[1.2rem] px-[1.6rem] pb-[0.4rem] opacity-[.45] text-small stretch-comments")#.get_text()
+                
+                #date: str = soup.find(
+                        #class_="text-[1.3rem] leading-[1.6rem] text-[rgba(0,0,0,0.45)] stretch-comments whitespace-nowrap overflow-hidden text-ellipsis") 
+                
+                #video: str = soup.find(
+                    #class_="w-full bg-[#f5f5f5] object-cover rounded-[1.2rem] aspect-[1/1]")
+
+                self.csv.add_image_to_author(author, link_image, prompt.replace("\n", " ").replace("  ", " "), like, comments)
 
             except Exception as e:
                 logging.error(e)
@@ -212,22 +241,10 @@ class Schedevrum:
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
 
+    start_time = time.time()
+
     #a = Schedevrum()
 
-
-    # a.get_image("https://shedevrum.ai/post/39dd04a0b08311ee8d61ba0d8cad0506/")
-    #a.get_images("/@wow/")
-
-
-    """csv_path = 'authors_1000.csv'  
-    df = pandas.read_csv(csv_path)
-
-    df=df.iloc[985:1002]
-
-    for author_value in df['author']:
-        print(author_value)
-        a.get_images(author_value)"""
-    
     #a.get_images("/@eklerika/")
 
 
@@ -237,64 +254,13 @@ if __name__ == '__main__':
     #a.main_page_parse_authors_with_info(100)
     #check_doubles('authors_2.csv')
 
-    #import os
-
-
-
-
-    """# Замените 'datasets' на путь к вашей директории с CSV файлами
-    datasets_folder_path = 'datasets'
-    process_datasets_folder(datasets_folder_path)"""
-    #import pandas as pd
-    """# 1. Найдем CSV файлы, содержащие менее 5 строк
-    small_files = []
-    datasets_folder_path = 'datasets'  # Путь к папке с CSV файлами
-    for filename in os.listdir(datasets_folder_path):
-        if filename.endswith(".csv"):
-            file_path = os.path.join(datasets_folder_path, filename)
-            try:
-                df = pandas.read_csv(file_path)
-                if len(df) < 5:
-                    small_files.append(file_path)
-            except Exception as e:
-                print(f"Ошибка при обработке файла {filename}: {e}")
-    print('amogus1')
-
-    # 2. Удалим соответствующих авторов из authors_1000.csv
-    authors_1000_path = 'authors_1000.csv'
-    df_authors_1000 = pandas.read_csv(authors_1000_path)
-    for small_file in small_files:
-        #author_name = os.path.basename(small_file).split("//")[1].split(".")[0]
-        author_name = os.path.basename(small_file).split(".")[0]
-        print(author_name)
-        author_name_1 = '/'+author_name+'/'
-        author_name_2 = '/profile/'+author_name+'/'
-        df_authors_1000 = df_authors_1000[df_authors_1000['author'] != author_name_1]
-        df_authors_1000 = df_authors_1000[df_authors_1000['author'] != author_name_2]
-    print('amogus2', small_files)
-    print (df_authors_1000.head(5))
-
-    # 3. Скопируем необходимое количество авторов из authors_2.csv в authors_1000.csv
-    authors_2_path = 'authors_2.csv'
-    df_authors_2 = pandas.read_csv(authors_2_path)
-    print(df_authors_2.head())
-    num_additional_authors = 1000 - len(df_authors_1000)
-    df_authors_1000 = pandas.concat([df_authors_1000, df_authors_2.iloc[1000:1000+num_additional_authors]])
-    print('amogus3', num_additional_authors)
-
-    # Сохраним обновленный authors_1000.csv
-
-    df_authors_1000_reset = df_authors_1000.reset_index(drop=True)
-    df_authors_1000.to_csv(authors_1000_path, index=True)
-
-    # 4. Вызовем a.get_images() для новых авторов
-    new_authors = df_authors_2.iloc[1000:1000+num_additional_authors]['author'].tolist()
-    for author in new_authors:
-        print(author)
-        a.get_images(f"/profile/{author}/")
-    print('amogus4')"""
-    
     #a.close_browser_session()
 
+    #print(df)
 
+    #df.to_csv('dataset_1.csv')
 
+    #end_time = time.time()
+
+    #execution_time = end_time - start_time
+    #print("Время исполнения кода:", execution_time, "секунд")
