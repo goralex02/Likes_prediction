@@ -7,6 +7,6 @@
 * parser.py: Скрипт для парсинга данных
 * requirements.txt: Файл с требуемыми пакетами
 ## Технологии
-Pandas, NumPy, matplotlib, seaborn, selenium, beautifulsoup, TensorFlow
+Pandas, NumPy, matplotlib, seaborn, selenium, beautifulsoup, TensorFlow, transformers
 ## Результат
 r2 0.7476, MAE 50.7144
