@@ -9,4 +9,5 @@
 ## Технологии
 Pandas, NumPy, matplotlib, seaborn, selenium, beautifulsoup, TensorFlow, transformers
 ## Результат
-r2 0.7476, MAE 50.7144
+* r2 = 0.7476 
+* MAE = 50.7144
